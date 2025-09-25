@@ -34,7 +34,7 @@ COPY --from=builder /app/package.json ./package.json
 
 
 # The app listens on 3000 by default
-EXPOSE 3000
+EXPOSE 5000
 
 # Use non-root user for security
 RUN addgroup -S nodejs && adduser -S nodeuser -G nodejs
