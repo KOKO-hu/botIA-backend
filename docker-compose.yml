@@ -7,7 +7,7 @@ services:
     container_name: tchat-message-loi
     environment:
       NODE_ENV: production
-      PORT: 3000
+      PORT: 5000
       # Provide your remote MongoDB connection string via env or .env
       MONGODB_URI: ${MONGODB_URI}
       # JWT
