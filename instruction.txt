@@ -1,0 +1,23 @@
+Tu es un expert NestJS et LangChain.  
+Je veux créer un backend qui permet d’interroger une base vectorielle **Qdrant** pour alimenter un chatbot IA.  
+
+Contexte :  
+- Le projet est déjà initialisé avec NestJS.  
+- La base vectorielle est **Qdrant**.  
+- Le backend doit recevoir une question utilisateur, chercher les documents pertinents dans Qdrant, et retourner ces résultats (je gérerai plus tard l’appel au LLM).  
+
+Tâches :  
+1. Crée un **QdrantService** qui :  
+   - Se connecte à Qdrant avec l’API client officiel.  
+   - Expose une méthode `search(query: string)` qui interroge Qdrant et retourne les documents les plus pertinents.  
+
+2. Crée un **ChatController** avec un endpoint `POST /chat` qui :  
+   - Reçoit `{ question: string }` en body.  
+   - Appelle `QdrantService.search(question)`.  
+   - Retourne les résultats sous forme de JSON.  
+
+3. Utilise de bonnes pratiques NestJS (Modules, Providers, Services, Controllers).  
+
+4. Ajoute un fichier `.env` avec la variable `QDRANT_URL` (et éventuellement `QDRANT_API_KEY`) et fais en sorte que le service utilise `@nestjs/config` pour la configuration.  
+
+5. Le code doit être en **TypeScript** et propre.  

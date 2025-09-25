@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  app:
+    build: .
+    image: tchat-message-loi:latest
+    container_name: tchat-message-loi
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      # Provide your remote MongoDB connection string via env or .env
+      MONGODB_URI: ${MONGODB_URI}
+      # JWT
+      JWT_SECRET: ${JWT_SECRET}
+      JWT_EXPIRES_IN: ${JWT_EXPIRES_IN:-7d}
+      # Mistral / OpenAI keys if used
+      MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      # Pinecone
+      PINECONE_API_KEY: ${PINECONE_API_KEY:-}
+      PINECONE_INDEX: ${PINECONE_INDEX:-}
+      # Google OAuth
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      # Vector and chat tuning
+      VECTOR_MIN_SCORE: ${VECTOR_MIN_SCORE:-0.6}
+      VECTOR_NUM_CANDIDATES: ${VECTOR_NUM_CANDIDATES:-5}
+      EMBEDDING_TIMEOUT_MS: ${EMBEDDING_TIMEOUT_MS:-15000}
+      VECTOR_TIMEOUT_MS: ${VECTOR_TIMEOUT_MS:-15000}
+    ports:
+      - "3000:3000"
