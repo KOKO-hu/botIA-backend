@@ -26,4 +26,4 @@ services:
       EMBEDDING_TIMEOUT_MS: ${EMBEDDING_TIMEOUT_MS:-15000}
       VECTOR_TIMEOUT_MS: ${VECTOR_TIMEOUT_MS:-15000}
     ports:
-      - "5000:5000"
+      - "5000:3004"
