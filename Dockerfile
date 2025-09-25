@@ -40,5 +40,5 @@ EXPOSE 5000
 RUN addgroup -S nodejs && adduser -S nodeuser -G nodejs
 USER nodeuser
 
-# Start the server
+# Start cfd the server
 CMD ["node", "dist/main.js"]
