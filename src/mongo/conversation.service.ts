@@ -83,12 +83,19 @@ export class ConversationService {
     const end = Math.max(0, totalMessages - (safePage - 1) * pageSize);
     const length = Math.max(0, Math.min(pageSize, end - start));
 
-    // Récupérer uniquement la tranche demandée via $slice
-    const convo = await this.conversationModel
-      .findOne({ sessionId })
-      .select({ messages: { $slice: [start, length] } });
-
-    const messages = convo?.messages || [];
+    // Récupérer uniquement la tranche demandée via aggregation
+    let messages = [];
+    
+    if (length > 0) {
+      const convo = await this.conversationModel.aggregate([
+        { $match: { sessionId } },
+        { $project: { messages: { $slice: ["$messages", start, length] } } }
+      ]);
+      messages = convo?.[0]?.messages || [];
+    } else {
+      // Si length est 0, retourner un tableau vide sans faire d'aggregation
+      messages = [];
+    }
 
     return {
       messages,

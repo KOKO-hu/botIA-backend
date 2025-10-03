@@ -1,4 +1,4 @@
-import { Controller, Post, Body, Get, Logger, UseGuards, Req, Query } from '@nestjs/common';
+import { Controller, Post, Body, Get, Logger, UseGuards, Req, Query, Delete } from '@nestjs/common';
 import { ChatService, ChatRequest, ChatResponse } from './chat.service';
 import { SessionGuard } from '../mongo/session.guard';
 import { InjectModel } from '@nestjs/mongoose';
@@ -109,6 +109,16 @@ export class ChatController {
       cancelled,
       message: cancelled ? 'Requête annulée avec succès' : 'Aucune requête en cours à annuler'
     };
+  }
+
+  // Effacer l'historique de conversation de la session courante
+  @UseGuards(SessionGuard)
+  @Delete('clear')
+  async clearCurrentSession(@Req() req: any) {
+    const sessionId = req?.user?.sessionId;
+    await this.conversationService.clearConversation(sessionId);
+    this.logger.log(`Conversation effacée pour la session: ${sessionId}`);
+    return { sessionId, message: 'Conversation effacée avec succès' };
   }
 
 
