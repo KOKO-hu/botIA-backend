@@ -17,17 +17,22 @@ export class AuthService {
   ) {}
 
   async register(email: string, password: string): Promise<{ userId: string }> {
+    const startedAt = Date.now();
+    this.logger.debug(`Register flow start email=${email?.toLowerCase()?.trim()}`);
     const existing = await this.userModel.findOne({ email: email.toLowerCase().trim() });
     if (existing) {
+      this.logger.warn(`Register conflict email=${email?.toLowerCase()?.trim()}`);
       throw new ConflictException('Email déjà utilisé');
     }
     const passwordHash = await bcrypt.hash(password, 10);
     const user = await this.userModel.create({ email: email.toLowerCase().trim(), passwordHash, isActive: true });
-    this.logger.log(`Utilisateur créé: ${user._id}`);
+    this.logger.log(`Utilisateur créé: ${user._id} in ${Date.now() - startedAt}ms`);
     return { userId: user._id.toString() };
   }
 
   async login(email: string, password: string): Promise<{ userId: string; sessionId: string }> {
+    const startedAt = Date.now();
+    this.logger.debug(`Login flow start email=${email?.toLowerCase()?.trim()}`);
     const user = await this.userModel.findOne({ email: email.toLowerCase().trim(), isActive: true });
     if (!user) throw new UnauthorizedException('Identifiants invalides');
 
@@ -43,7 +48,7 @@ export class AuthService {
       await session.save();
     }
 
-    this.logger.log(`Session active pour user=${user._id}, session=${session._id}`);
+    this.logger.log(`Session active pour user=${user._id}, session=${session._id} in ${Date.now() - startedAt}ms`);
     return { userId: user._id.toString(), sessionId: session._id.toString() };
   }
 
@@ -74,12 +79,14 @@ export class AuthService {
 
   // Vérifier un ID token Google côté serveur
   async verifyGoogleIdToken(idToken: string): Promise<{ email: string; googleId: string; name?: string; avatar?: string }>{
+    const startedAt = Date.now();
     const clientId = process.env.GOOGLE_CLIENT_ID;
     if (!clientId) throw new UnauthorizedException('GOOGLE_CLIENT_ID manquant');
     const client = new OAuth2Client(clientId);
     const ticket = await client.verifyIdToken({ idToken, audience: clientId });
     const payload = ticket.getPayload();
     if (!payload?.sub || !payload?.email) throw new UnauthorizedException('ID token Google invalide');
+    this.logger.debug(`Google token verified in ${Date.now() - startedAt}ms`);
     return {
       email: String(payload.email).toLowerCase(),
       googleId: String(payload.sub),
@@ -90,6 +97,7 @@ export class AuthService {
 
   // Upsert Google user and ensure single active session
   async upsertGoogleUser(email: string, googleId: string, name?: string, avatar?: string): Promise<{ userId: string; sessionId: string }>{
+    const startedAt = Date.now();
     const lower = (email || '').toLowerCase().trim();
     let user = await this.userModel.findOne({ $or: [{ googleId }, { email: lower }] });
     if (!user) {
@@ -108,6 +116,7 @@ export class AuthService {
       session.isActive = true;
       await session.save();
     }
+    this.logger.log(`Upserted Google user and session in ${Date.now() - startedAt}ms user=${user._id} session=${session._id}`);
     return { userId: user._id.toString(), sessionId: session._id.toString() };
   }
 }
