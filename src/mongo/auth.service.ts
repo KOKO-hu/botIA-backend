@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import * as bcrypt from 'bcryptjs';
 import * as jwt from 'jsonwebtoken';
-import { OAuth2Client } from 'google-auth-library';
+import * as admin from 'firebase-admin';
 import { User, UserDocument } from './schemas/user.schema';
 import { Session, SessionDocument } from './schemas/session.schema';
 
@@ -59,10 +59,10 @@ export class AuthService {
   }
 
   issueToken(userId: string, sessionId: string): string {
-    const secret = process.env.JWT_SECRET;
-    const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
+    const secret = process.env.JWT_SECRET as string;
+    const expiresIn = (process.env.JWT_EXPIRES_IN || '7d') as string;
     if (!secret) throw new UnauthorizedException('JWT secret non configuré');
-    const token = jwt.sign({ userId, sessionId }, secret, { expiresIn });
+    const token = jwt.sign({ userId, sessionId }, secret as jwt.Secret, { expiresIn: 60 * 60 * 24 * 7 });
     return token;
   }
 
@@ -77,22 +77,47 @@ export class AuthService {
     }
   }
 
-  // Vérifier un ID token Google côté serveur
+  // Vérifier un ID token Firebase côté serveur
   async verifyGoogleIdToken(idToken: string): Promise<{ email: string; googleId: string; name?: string; avatar?: string }>{
     const startedAt = Date.now();
-    const clientId = process.env.GOOGLE_CLIENT_ID;
-    if (!clientId) throw new UnauthorizedException('GOOGLE_CLIENT_ID manquant');
-    const client = new OAuth2Client(clientId);
-    const ticket = await client.verifyIdToken({ idToken, audience: clientId });
-    const payload = ticket.getPayload();
-    if (!payload?.sub || !payload?.email) throw new UnauthorizedException('ID token Google invalide');
-    this.logger.debug(`Google token verified in ${Date.now() - startedAt}ms`);
-    return {
-      email: String(payload.email).toLowerCase(),
-      googleId: String(payload.sub),
-      name: payload.name,
-      avatar: payload.picture,
-    };
+    
+    // Initialiser Firebase Admin si pas déjà fait
+    if (!admin.apps.length) {
+      const serviceAccount = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+      if (!serviceAccount) {
+        throw new UnauthorizedException('FIREBASE_SERVICE_ACCOUNT_KEY manquant');
+      }
+      
+      try {
+        const serviceAccountKey = JSON.parse(serviceAccount);
+        admin.initializeApp({
+          credential: admin.credential.cert(serviceAccountKey),
+        });
+      } catch (error) {
+        this.logger.error('Erreur lors de l\'initialisation Firebase Admin', error);
+        throw new UnauthorizedException('Configuration Firebase invalide');
+      }
+    }
+
+    try {
+      const decodedToken = await admin.auth().verifyIdToken(idToken);
+      const { uid, email, name, picture } = decodedToken;
+      
+      if (!email) {
+        throw new UnauthorizedException('Email manquant dans le token Firebase');
+      }
+      
+      this.logger.debug(`Firebase token verified in ${Date.now() - startedAt}ms`);
+      return {
+        email: email.toLowerCase(),
+        googleId: uid,
+        name: name,
+        avatar: picture,
+      };
+    } catch (error) {
+      this.logger.error('Erreur lors de la vérification du token Firebase', error);
+      throw new UnauthorizedException('Token Firebase invalide ou expiré');
+    }
   }
 
   // Upsert Google user and ensure single active session
