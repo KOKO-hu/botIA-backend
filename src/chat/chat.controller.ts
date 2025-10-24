@@ -121,5 +121,5 @@ export class ChatController {
     return { sessionId, message: 'Conversation effacée avec succès' };
   }
 
-
+ 
 }
