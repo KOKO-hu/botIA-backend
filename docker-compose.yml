@@ -20,6 +20,8 @@ services:
       PINECONE_INDEX: ${PINECONE_INDEX:-}
       # Google OAuth
       GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      # Firebase Service Account
+      FIREBASE_SERVICE_ACCOUNT_KEY: ${FIREBASE_SERVICE_ACCOUNT_KEY:-}
       # Vector and chat tuning
       VECTOR_MIN_SCORE: ${VECTOR_MIN_SCORE:-0.6}
       VECTOR_NUM_CANDIDATES: ${VECTOR_NUM_CANDIDATES:-5}
