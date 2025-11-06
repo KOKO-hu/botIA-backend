@@ -4,7 +4,11 @@ import { AppModule } from './app.module';
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
   app.enableCors({
-    origin: true, // reflète l'origine de la requête (autorise toutes les origines)
+    origin: [
+      'https://jurybot.yob.digital',
+      'https://www.jurybot.yob.digital'
+    ],
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
   });
   await app.listen(3004);
