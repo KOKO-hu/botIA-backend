@@ -8,6 +8,7 @@ async function bootstrap() {
       'https://jurybot.yob.digital',
       'https://www.jurybot.yob.digital',
       'http://localhost:3000',
+      'http://localhost:3004',
     ],
     methods: 'GET,HEAD,PUT,PATCH,POST,DELETE',
     credentials: true,
