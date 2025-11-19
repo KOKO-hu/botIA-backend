@@ -22,8 +22,9 @@
   "dependencies": {
     "@chroma-core/default-embed": "^0.1.8",
     "@huggingface/inference": "^4.8.0",
+    "@langchain/anthropic": "^1.0.1",
     "@langchain/community": "^0.3.56",
-    "@langchain/core": "^0.3.77",
+    "@langchain/core": "^1.0.5",
     "@langchain/mistralai": "^0.2.1",
     "@langchain/openai": "^0.6.9",
     "@langchain/pinecone": "^0.2.0",
@@ -39,10 +40,11 @@
     "chromadb": "^3.0.15",
     "firebase-admin": "^13.5.0",
     "google-auth-library": "^10.3.0",
-    "langchain": "^0.3.31",
+    "langchain": "^1.0.4",
     "mongoose": "^8.18.1",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.1"
+    "rxjs": "^7.8.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@nestjs/cli": "^10.0.0",

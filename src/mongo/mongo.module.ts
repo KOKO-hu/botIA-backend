@@ -5,7 +5,6 @@ import { Chunk, ChunkSchema } from './schemas/chunk.schema';
 import { Conversation, ConversationSchema } from './schemas/conversation.schema';
 import { User, UserSchema } from './schemas/user.schema';
 import { Session, SessionSchema } from './schemas/session.schema';
-import { ConversationService } from './conversation.service';
 import { SessionGuard } from './session.guard';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
@@ -21,8 +20,8 @@ import { AuthService } from './auth.service';
     ]),
   ],
   controllers: [AuthController],
-  providers: [ConversationService, AuthService, SessionGuard],
-  exports: [ConversationService, AuthService, SessionGuard, MongooseModule],
+  providers: [ AuthService, SessionGuard],
+  exports: [ AuthService, SessionGuard, MongooseModule],
 })
 export class MongoModule {}
 

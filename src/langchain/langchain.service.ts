@@ -1,147 +1,88 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
+import { OpenAI } from '@langchain/openai'; // Importez le modèle spécifique
 import { ConfigService } from '@nestjs/config';
-import { ChatMistralAI } from '@langchain/mistralai';
-import { ChatOpenAI } from '@langchain/openai';
-import { ChatPromptTemplate } from '@langchain/core/prompts';
-import { StringOutputParser } from '@langchain/core/output_parsers';
-import { RequestCancelledException } from '../chat/exceptions/cancelled.exception';
+import { ChatAnthropic } from '@langchain/anthropic';
+import { createAgent, createMiddleware, trimMessages } from 'langchain';
+import { PineconeService } from 'src/pinecone/pinecone.service';
+import { searchBeninLaw } from 'src/tools/chat.tools';
+import { createLegalQuizPro, QuizLLM } from 'src/tools/quiz.tools';
+import { MongoCheckpointer } from 'src/memory/mongo-checkpointer.service';
+
+export interface MongoCheckpointerInterface {
+  get(threadId: string): Promise<{
+    messages: any[];
+    summary: string;
+    context: string;
+    messageCount: number;
+  } | null>;
+  put(threadId: string, state: any): Promise<void>;
+}
 
 @Injectable()
-export class LangChainService {
-  private readonly logger = new Logger(LangChainService.name);
-  private llm: ChatMistralAI | ChatOpenAI;
-  private chain: any; // Pipeline Runnables
-  private isMistral: boolean = false;
+export class LangchainService {
+  private readonly model: ChatAnthropic;
+  private readonly agent: any;
 
-  constructor(private configService: ConfigService) {
-    const mistralApiKey = this.configService.get<string>('MISTRAL_API_KEY');
-    const openaiApiKey = this.configService.get<string>('OPENAI_API_KEY');
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly pineconeService: PineconeService,
+    private readonly mongoCheckpointer: MongoCheckpointer,
+  ) {
     
-    // Priorité à Mistral, fallback vers OpenAI
-    if (mistralApiKey) {
-      this.initializeMistral(mistralApiKey);
-    } else if (openaiApiKey) {
-      this.initializeOpenAI(openaiApiKey);
-    } else {
-      this.logger.warn('Aucune clé API configurée (Mistral ou OpenAI), LangChain ne fonctionnera pas');
-      return;
-    }
-  }
-
-  private initializeMistral(apiKey: string): void {
-    const model = this.configService.get<string>('MISTRAL_MODEL') || 'mistral-large-latest';
-    
-    this.llm = new ChatMistralAI({
-      apiKey: apiKey,
-      model: model,
-      temperature: 0.3,
+    // Initialisez le modèle en utilisant la clé API du fichier .env
+    const trimMessageHistory = createMiddleware({
+      name: 'TrimMessages',
+      beforeModel: async (state) => {
+        console.log('state', state);
+        const trimmedMessages = await trimMessages(state.messages, {
+          maxTokens: 3000,
+          strategy: 'last',
+          startOn: "human",
+          endOn: ["human", "tool"],
+          tokenCounter: (msgs) => msgs.length,
+        });
+    console.log('trimmedMessages', trimmedMessages);
+        return {
+          ...state,           // 👈 IMPORTANT : garder configurable, metadata, tags, etc.
+          messages: trimmedMessages,
+        };
+      },
     });
+    const anthropicModel =
+      this.configService.get<string>('ANTHROPIC_MODEL') ??
+      'claude-3-sonnet-20240229';
 
-    this.isMistral = true;
-    this.logger.log(`LangChainService initialisé avec Mistral (${model})`);
-    
-    // Initialiser la mémoire et la chaîne après avoir configuré le LLM
-    this.initializeMemoryAndChain();
-  }
-
-  private initializeOpenAI(apiKey: string): void {
-    this.llm = new ChatOpenAI({
-      openAIApiKey: apiKey,
-      modelName: 'gpt-3.5-turbo',
-      temperature: 0.3,
+    this.model = new ChatAnthropic({
+      apiKey: this.configService.get<string>('ANTHROPIC_API_KEY'),
+      model: anthropicModel,
+      temperature: 0.5,
+      maxTokens: 1000,
     });
-
-    this.isMistral = false;
-    this.logger.log('LangChainService initialisé avec OpenAI GPT-3.5-turbo (fallback)');
+    const searchLawTool = searchBeninLaw(this.pineconeService);
+    const createLegalQuizTool = createLegalQuizPro(
+      this.pineconeService,
+      this.model as unknown as QuizLLM,
+    );
     
-    // Initialiser la mémoire et la chaîne après avoir configuré le LLM
-    this.initializeMemoryAndChain();
+    // Création de l’agent
+    this.agent = createAgent({
+      model: this.model,
+      tools: [searchLawTool, createLegalQuizTool], // Ajoute tes tools plus tard
+      systemPrompt: `
+  You are a legal assistant specialized in Beninese law.
+
+Rules:
+1. If the user asks for a "quiz" or "questionnaire", use ONLY the tool 'create_legal_quiz_pro'.
+2. If the user asks a general legal question, use ONLY the tool 'search_benin_law'.
+3. NEVER combine tools for a single request.
+4. Always follow the user's request type strictly.
+    `,
+     checkpointer: this.mongoCheckpointer as any, 
+      middleware: [trimMessageHistory],
+    });
   }
 
-  private initializeMemoryAndChain(): void {
-    // Template de prompt optimisé pour Mistral (nouveau pipeline Runnables)
-    const promptTemplate = ChatPromptTemplate.fromTemplate(`
-Tu es un assistant juridique spécialisé dans le droit béninois. Tu réponds aux questions en t'appuyant uniquement sur les lois, codes et articles fournis ainsi que l'historique de la conversation.
-
-Extraits de lois pertinents:
-{documents}
-
-Historique de la conversation:
-{history}
-
-Question de l'utilisateur: {question}
-
-Instructions:
-- Réponds UNIQUEMENT à partir des lois et articles ci-dessus.
-- N'invente rien. Si l'information légale n'est pas présente, réponds: "Je n'ai pas assez d'informations légales dans les extraits fournis."
-- Reste strictement dans le droit béninois.
-- Parle comme un juriste en conversation : style naturel, accessible, sans formater comme un document académique.
-- Évite les listes à puces, les "Source :", les citations formelles.
-- Sois direct et conversationnel tout en restant précis.
-- Dans ta réponse, mentionne explicitement la référence légale utilisée (intitulé ou code, article, année si disponible), par exemple: "Selon le Code du travail béninois (art. 12, 2017), ...".
-- S'il existe plusieurs textes applicables, privilégie le plus spécifique et mentionne-le.
-    - Si aucune référence précise n'est disponible dans les extraits, indique-le clairement.
-    
-    Exemples (adapter selon les extraits fournis):
-    - Question: "Quel est le délai de préavis en cas de licenciement ?"
-      Réponse: "Selon le Code du travail béninois (art. [numéro], [année si disponible]), le délai de préavis est de [...], sauf dispositions particulières."
-    - Question: "Quels sont les documents requis pour créer une SARL ?"
-      Réponse: "Selon l'Acte uniforme OHADA relatif au droit des sociétés commerciales (art. [numéro], [année]), la SARL requiert notamment [...]."
-    - Information insuffisante:
-      Réponse: "Je n'ai pas assez d'informations légales dans les extraits fournis."
-    
-    Réponse:
-`);
-
-    // Création du pipeline Runnables (remplace LLMChain)
-    this.chain = promptTemplate.pipe(this.llm).pipe(new StringOutputParser());
-
-    this.logger.log(`LangChainService configuré avec ${this.isMistral ? 'Mistral' : 'OpenAI'} (mémoire MongoDB uniquement)`);
+  public getAgent() {
+    return this.agent;
   }
-
-  async generateResponse(question: string, documents: string[], sessionId?: string, historyOverride?: string, abortSignal?: AbortSignal): Promise<string> {
-    if (!this.chain) {
-      throw new Error("LangChain non initialisé");
-    }
-
-    try {
-      // Construire le contexte à partir des documents
-      const context = documents.join("\n\n");
-      
-      // Utiliser uniquement l'historique MongoDB (via historyOverride)
-      const history = historyOverride || "";
-
-      // Vérifier l'annulation avant l'appel LLM
-      if (abortSignal?.aborted) {
-        throw new RequestCancelledException(sessionId || 'unknown');
-      }
-
-      // Appeler le pipeline Runnables avec signal d'annulation
-      const response = await this.chain.invoke({
-        question,
-        documents: context,
-        history
-      }, {
-        signal: abortSignal
-      });
-
-      if (!response) {
-        this.logger.warn("Aucune réponse textuelle trouvée dans le résultat LLM");
-        return "Je n'ai pas pu générer de réponse appropriée.";
-      }
-
-      // Note: La sauvegarde se fait maintenant uniquement dans MongoDB via ChatService
-      this.logger.log(`Réponse LLM générée (${response.length} caractères) - Mémoire MongoDB uniquement`);
-      return response;
-
-    } catch (error) {
-      this.logger.error("Erreur lors de la génération de réponse LLM:", error);
-      throw new Error("Erreur lors de la génération de la réponse");
-    }
-  }
-
-  isInitialized(): boolean {
-    return !!this.chain && !!this.llm;
-  }
-
 }

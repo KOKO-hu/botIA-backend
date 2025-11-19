@@ -3,14 +3,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { ChatModule } from './chat/chat.module';
-
-
-import { LangChainModule } from './langchain/langchain.module';
 import { MongooseModule } from '@nestjs/mongoose';
 import { MongoModule } from './mongo/mongo.module';
-import { PineconeModule } from './pinecone/pinecone.module';
-import { EmbeddingModule } from './embedding/embedding.module';
-
+import { LangchainService } from './langchain/langchain.service';
+import { PineconeService } from './pinecone/pinecone.service';
+import { MongoCheckpointer } from './memory/mongo-checkpointer.service';
 @Module({
   imports: [
     ConfigModule.forRoot({
@@ -26,14 +23,10 @@ import { EmbeddingModule } from './embedding/embedding.module';
       }),
     }),
     ChatModule,
-
-
-    LangChainModule,
     MongoModule,
-    PineconeModule,
-    EmbeddingModule,
+
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, LangchainService, PineconeService, MongoCheckpointer],
 })
 export class AppModule {}

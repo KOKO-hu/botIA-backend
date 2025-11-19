@@ -42,6 +42,21 @@ export class Conversation {
 
   @Prop({ default: 0 })
   messageCount: number; // Compteur de messages pour optimiser les requêtes
+
+  @Prop({ type: Object, default: null })
+  checkpoint?: Record<string, any> | null;
+
+  @Prop({ type: Object, default: null })
+  checkpointMetadata?: Record<string, any> | null;
+
+  @Prop({ type: Object, default: null })
+  checkpointConfig?: Record<string, any> | null;
+
+  @Prop({ type: Object, default: null })
+  checkpointParentConfig?: Record<string, any> | null;
+
+  @Prop({ type: Array, default: [] })
+  checkpointPendingWrites?: Array<any>;
 }
 
 export const ConversationSchema = SchemaFactory.createForClass(Conversation);
