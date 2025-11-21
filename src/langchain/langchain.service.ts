@@ -7,6 +7,7 @@ import { PineconeService } from 'src/pinecone/pinecone.service';
 import { searchBeninLaw } from 'src/tools/chat.tools';
 import { createLegalQuizPro, QuizLLM } from 'src/tools/quiz.tools';
 import { MongoCheckpointer } from 'src/memory/mongo-checkpointer.service';
+import { z } from 'zod';
 
 export interface MongoCheckpointerInterface {
   get(threadId: string): Promise<{
@@ -57,7 +58,17 @@ export class LangchainService {
       model: anthropicModel,
       temperature: 0.5,
       maxTokens: 1000,
-    });
+    }).withStructuredOutput(z.object({
+      response: z.string().describe('Réponse de l\'IA'),
+      response_quiz: z.object({
+        questions: z.array(z.object({
+          question: z.string().describe('Question'),
+          options: z.array(z.string()).describe('Options de réponse'),
+          correctAnswerIndex: z.number().describe('Index de la bonne réponse'),
+          explanation: z.string().describe('Explication'),
+        })).describe('Questions'),
+      }).describe('Réponse de l\'IA pour un quiz'),
+    }));
     const searchLawTool = searchBeninLaw(this.pineconeService);
     const createLegalQuizTool = createLegalQuizPro(
       this.pineconeService,
