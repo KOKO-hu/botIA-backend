@@ -100,6 +100,7 @@ export const createLegalQuizPro = (
                 description: "Nombre de questions (défaut 5)",
               },
             },
+             toolMessageContent: "Quiz généré avec succès. Arrêt de l'agent.",
             required: ["topic"],
           },
         }

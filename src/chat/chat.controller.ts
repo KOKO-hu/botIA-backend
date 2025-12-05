@@ -37,7 +37,7 @@ export class ChatController {
     const sessionId = req?.user?.sessionId;
     const userId = req?.user?.userId;
     const currentPage = page ? Math.max(1, Number(page)) : 1;
-    const currentPageSize = pageSize ? Math.max(1, Number(pageSize)) : 5;
+    const currentPageSize = pageSize ? Math.max(1, Number(pageSize)) : 20;
 
     return this.chatService.getSessionHistory(
       sessionId,

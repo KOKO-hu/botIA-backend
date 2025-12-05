@@ -21,7 +21,8 @@ export class Conversation {
     metadata?: {
       relevantDocuments?: any[];
       embeddingVector?: number[];
-      sources?: string[];
+      sources?: any[];
+      quiz?: any[]; // Questions du quiz
     };
   }>;
 

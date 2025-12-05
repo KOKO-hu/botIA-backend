@@ -1,8 +1,7 @@
 import { Injectable } from '@nestjs/common';
-import { OpenAI } from '@langchain/openai'; // Importez le modèle spécifique
 import { ConfigService } from '@nestjs/config';
 import { ChatAnthropic } from '@langchain/anthropic';
-import { createAgent, createMiddleware, trimMessages } from 'langchain';
+import { createAgent, createMiddleware, providerStrategy, toolStrategy, trimMessages } from 'langchain';
 import { PineconeService } from 'src/pinecone/pinecone.service';
 import { searchBeninLaw } from 'src/tools/chat.tools';
 import { createLegalQuizPro, QuizLLM } from 'src/tools/quiz.tools';
@@ -23,13 +22,12 @@ export interface MongoCheckpointerInterface {
 export class LangchainService {
   private readonly model: ChatAnthropic;
   private readonly agent: any;
-
+  public structuredQuizModel: any;
   constructor(
     private readonly configService: ConfigService,
     private readonly pineconeService: PineconeService,
     private readonly mongoCheckpointer: MongoCheckpointer,
   ) {
-    
     // Initialisez le modèle en utilisant la clé API du fichier .env
     const trimMessageHistory = createMiddleware({
       name: 'TrimMessages',
@@ -38,13 +36,13 @@ export class LangchainService {
         const trimmedMessages = await trimMessages(state.messages, {
           maxTokens: 3000,
           strategy: 'last',
-          startOn: "human",
-          endOn: ["human", "tool"],
+          startOn: 'human',
+          endOn: ['human', 'tool'],
           tokenCounter: (msgs) => msgs.length,
         });
-    console.log('trimmedMessages', trimmedMessages);
+        console.log('trimmedMessages', trimmedMessages);
         return {
-          ...state,           // 👈 IMPORTANT : garder configurable, metadata, tags, etc.
+          ...state, // 👈 IMPORTANT : garder configurable, metadata, tags, etc.
           messages: trimmedMessages,
         };
       },
@@ -58,42 +56,68 @@ export class LangchainService {
       model: anthropicModel,
       temperature: 0.5,
       maxTokens: 1000,
-    }).withStructuredOutput(z.object({
-      response: z.string().describe('Réponse de l\'IA'),
-      response_quiz: z.object({
-        questions: z.array(z.object({
-          question: z.string().describe('Question'),
-          options: z.array(z.string()).describe('Options de réponse'),
-          correctAnswerIndex: z.number().describe('Index de la bonne réponse'),
-          explanation: z.string().describe('Explication'),
-        })).describe('Questions'),
-      }).describe('Réponse de l\'IA pour un quiz'),
-    }));
+    });
+
     const searchLawTool = searchBeninLaw(this.pineconeService);
     const createLegalQuizTool = createLegalQuizPro(
       this.pineconeService,
       this.model as unknown as QuizLLM,
     );
-    
-    // Création de l’agent
-    this.agent = createAgent({
-      model: this.model,
-      tools: [searchLawTool, createLegalQuizTool], // Ajoute tes tools plus tard
-      systemPrompt: `
-  You are a legal assistant specialized in Beninese law.
 
-Rules:
-1. If the user asks for a "quiz" or "questionnaire", use ONLY the tool 'create_legal_quiz_pro'.
-2. If the user asks a general legal question, use ONLY the tool 'search_benin_law'.
-3. NEVER combine tools for a single request.
-4. Always follow the user's request type strictly.
-    `,
-     checkpointer: this.mongoCheckpointer as any, 
-      middleware: [trimMessageHistory],
+    const SearchResponseSchema = z.object({
+      type: z.literal("search_result"),
+      response: z.string().describe("La réponse textuelle à la question juridique."),
     });
+
+    const QuizResponseSchema = z.object({
+      type: z.literal("quiz_result"),
+      response_quiz: z.object({ 
+        questions: z.array(z.object({
+          // ... détails de vos questions ...
+          question: z.string(),
+          options: z.array(z.string()),
+          correctAnswerIndex: z.number(),
+          explanation: z.string(),
+        })),
+      }),
+    });
+    /* schema for the final agent */
+const FinalAgentSchema = z.object({
+  action: z.enum(["search", "quiz"]),
+  data: z.union([SearchResponseSchema, QuizResponseSchema])
+});
+    // Création de l'agent
+this.agent = createAgent({
+  model: this.model,
+  tools: [searchLawTool, createLegalQuizTool],
+  systemPrompt: `
+You are a legal assistant specialized in Beninese law.
+
+RULES (CRITICAL):
+1. "quiz" / "questionnaire" → ONLY 'create_legal_quiz_pro' tool
+2. Questions juridiques générales → ONLY 'search_benin_law' tool  
+3. NEVER use both tools together
+4. Choose EXACTLY ONE tool per request
+
+IMPORTANT - When using 'search_benin_law' tool:
+- The tool will return sources with URLs in the 'sources' field (check the tool response)
+- You MUST include ALL source URLs in your final response to the user
+- Format URLs as clickable markdown links: [Loi n°XXXX - Titre](URL)
+- Include URLs in a "Sources" section at the end of your response
+- Each source should be formatted as: - [Loi n°{numero_loi} - {titre}]({url})
+- Example format:
+  **Sources :**
+  - [Loi n°2017-05 - Code du travail](https://videoshotai.s3.eu-north-1.amazonaws.com/lois_benin/pdfs/loi-2017-05.pdf)
+- NEVER omit the URLs - they are essential for users to access the legal documents
+  `,
+  checkpointer: this.mongoCheckpointer as any,
+  middleware: [trimMessageHistory],
+ /*  responseFormat: toolStrategy(FinalAgentSchema) */
+  // PAS de responseFormat ici - les tools gèrent leur propre format
+});
   }
 
   public getAgent() {
     return this.agent;
   }
-}
+} 

@@ -150,6 +150,10 @@ export class MongoCheckpointer extends BaseCheckpointSaver {
       );
     }
 
+    // Extraire et convertir les messages du checkpoint vers le format du schéma
+    const checkpointMessages = (checkpoint as any)?.channel_values?.messages ?? [];
+    const formattedMessages = this.formatMessagesForSchema(checkpointMessages);
+
     await this.conversationModel.findByIdAndUpdate(
       threadId,
       {
@@ -166,12 +170,218 @@ export class MongoCheckpointer extends BaseCheckpointSaver {
             }
           : null,
         checkpointPendingWrites: [],
+        messages: formattedMessages,
+        messageCount: formattedMessages.length,
         updatedAt: new Date(),
       },
       { new: false },
     );
 
     return this.normalizeConfig(config, threadId);
+  }
+
+  /**
+   * Convertit les messages LangGraph vers le format du schéma Conversation
+   */
+  private formatMessagesForSchema(checkpointMessages: any[]): Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: Date;
+    metadata?: {
+      relevantDocuments?: any[];
+      embeddingVector?: number[];
+      sources?: any[];
+      quiz?: any[];
+    };
+  }> {
+    const formatted: Array<{
+      role: 'user' | 'assistant';
+      content: string;
+      timestamp: Date;
+      metadata?: {
+        relevantDocuments?: any[];
+        embeddingVector?: number[];
+        sources?: any[];
+        quiz?: any[];
+      };
+    }> = [];
+
+    // Parcourir les messages et associer les sources/quiz des ToolMessages aux messages AI
+    for (let i = 0; i < checkpointMessages.length; i++) {
+      const msg = checkpointMessages[i];
+      
+      // Si c'est un message tool, on l'ignore mais on extraira ses données pour le prochain message AI
+      if (msg.type === 'tool' || msg.role === 'tool') {
+        continue;
+      }
+
+      // Déterminer le role
+      let role: 'user' | 'assistant' = 'user';
+      if (msg.type === 'ai' || msg.type === 'assistant' || msg.role === 'assistant') {
+        role = 'assistant';
+      } else if (msg.type === 'human' || msg.type === 'user' || msg.role === 'user') {
+        role = 'user';
+      } else {
+        continue; // Ignorer les autres types
+      }
+
+      // Extraire le contenu
+      let content = '';
+      if (typeof msg.content === 'string') {
+        content = msg.content;
+      } else if (Array.isArray(msg.content)) {
+        // Extraire le texte des chunks
+        content = msg.content
+          .map((chunk: any) => {
+            if (typeof chunk === 'string') return chunk;
+            if (chunk?.type === 'text') return chunk.text;
+            if (chunk?.text) return chunk.text;
+            return '';
+          })
+          .filter(Boolean)
+          .join('\n');
+      } else if (msg.content?.text) {
+        content = msg.content.text;
+      }
+
+      // Extraire les sources et quiz depuis les ToolMessages précédents (pour les messages assistant)
+      let metadata: {
+        relevantDocuments?: any[];
+        embeddingVector?: number[];
+        sources?: any[];
+        quiz?: any[];
+      } | undefined = undefined;
+
+      if (role === 'assistant') {
+        const sources = this.extractSourcesFromPreviousToolMessages(checkpointMessages, i);
+        const quiz = this.extractQuizFromPreviousToolMessages(checkpointMessages, i);
+        
+        if (sources && sources.length > 0) {
+          metadata = { ...metadata, sources };
+        }
+        if (quiz && quiz.length > 0) {
+          metadata = { ...metadata, quiz };
+        }
+      }
+
+      // Sauvegarder le message même s'il n'a pas de contenu textuel mais a des métadonnées (quiz/sources)
+      // Pour les messages user, on exige toujours un contenu
+      if (role === 'user' && (!content || content.trim().length === 0)) {
+        continue;
+      }
+
+      // Pour les messages assistant, on sauvegarde s'il y a du contenu OU des métadonnées
+      if (role === 'assistant' && !content && (!metadata || (!metadata.quiz && !metadata.sources))) {
+        continue;
+      }
+
+      // Utiliser un contenu par défaut si vide mais qu'on a des métadonnées
+      const finalContent = content.trim() || (metadata?.quiz ? 'Quiz généré' : 'Réponse générée');
+
+      formatted.push({
+        role,
+        content: finalContent,
+        timestamp: new Date(),
+        metadata: metadata,
+      });
+    }
+
+    return formatted;
+  }
+
+  /**
+   * Extrait les sources depuis les ToolMessages précédents un message AI
+   */
+  private extractSourcesFromPreviousToolMessages(
+    messages: any[],
+    currentIndex: number,
+  ): any[] | undefined {
+    // Chercher uniquement le message tool immédiatement précédent
+    if (currentIndex === 0) return undefined;
+    
+    const msg = messages[currentIndex - 1];
+    
+    // Si on trouve un message tool avec search_benin_law
+    if (
+      (msg.type === 'tool' || msg.role === 'tool' || msg.name === 'search_benin_law') &&
+      msg.content
+    ) {
+      try {
+        let toolContent: any;
+        
+        // Parser le contenu du tool
+        if (typeof msg.content === 'string') {
+          try {
+            toolContent = JSON.parse(msg.content);
+          } catch {
+            toolContent = msg.content;
+          }
+        } else {
+          toolContent = msg.content;
+        }
+
+        // Extraire les sources
+        if (toolContent?.sources && Array.isArray(toolContent.sources)) {
+          return toolContent.sources;
+        } else if (toolContent?.type === 'search_result' && toolContent?.sources) {
+          return toolContent.sources;
+        }
+      } catch (e) {
+        // Ignorer les erreurs de parsing
+      }
+    }
+
+    return undefined;
+  }
+
+  /**
+   * Extrait les questions du quiz depuis les ToolMessages précédents un message AI
+   */
+  private extractQuizFromPreviousToolMessages(
+    messages: any[],
+    currentIndex: number,
+  ): any[] | undefined {
+    // Chercher uniquement le message tool immédiatement précédent
+    if (currentIndex === 0) return undefined;
+    
+    const msg = messages[currentIndex - 1];
+    
+    // Si on trouve un message tool avec create_legal_quiz_pro
+    if (
+      (msg.type === 'tool' || msg.role === 'tool' || msg.name === 'create_legal_quiz_pro') &&
+      msg.content
+    ) {
+      try {
+        let toolContent: any;
+        
+        // Parser le contenu du tool
+        if (typeof msg.content === 'string') {
+          try {
+            toolContent = JSON.parse(msg.content);
+          } catch {
+            toolContent = msg.content;
+          }
+        } else {
+          toolContent = msg.content;
+        }
+
+        // Le tool retourne directement un tableau de questions (QuizQuestion[])
+        if (Array.isArray(toolContent)) {
+          // Si c'est directement un tableau de questions
+          return toolContent;
+        } else if (toolContent?.questions && Array.isArray(toolContent.questions)) {
+          // Si c'est un objet avec un champ questions
+          return toolContent.questions;
+        } else if (toolContent && typeof toolContent === 'object') {
+          // Si c'est un objet unique, le traiter comme une question
+          return [toolContent];
+        }
+      } catch (e) {
+        // Ignorer les erreurs de parsing
+      }
+    }
+
+    return undefined;
   }
 
   async putWrites(
@@ -251,63 +461,32 @@ export class MongoCheckpointer extends BaseCheckpointSaver {
       };
     }
 
-    const checkpointMessages =
-      (conversation.checkpoint as any)?.channel_values?.messages ?? [];
+    // Utiliser directement les messages formatés depuis conversation.messages
+    const formattedMessages = conversation.messages ?? [];
 
-    const normalizeContent = (message: any) => {
-      const content = message.content ?? message.lc_kwargs?.content;
-      if (typeof content === "string") {
-        return content;
-      }
-      if (Array.isArray(content)) {
-        const hasOnlyToolUse = content.every((chunk) =>
-          ["tool_use", "tool_result"].includes(chunk?.type),
-        );
-        if (hasOnlyToolUse) {
+    // Transformer les messages du schéma vers le format attendu
+    const normalizedMessages = formattedMessages
+      .map((msg: any, index: number) => {
+        if (!msg || !msg.role || !msg.content) {
           return null;
         }
-        return content;
-      }
-      return content ?? null;
-    };
 
-    const normalizeMessage = (message: any) => {
-      if (!message) return null;
-      const lc = message.lc_kwargs ?? {};
-      const normalizedContent = normalizeContent({
-        content: message.content ?? lc.content,
-        lc_kwargs: lc,
-      });
-
-      if (normalizedContent === null || normalizedContent === undefined) {
-        return null;
-      }
-
-      return {
-        id: message.id ?? lc.id,
-        type: message.type ?? lc.type ?? message.role ?? lc.role ?? "unknown",
-        role: message.role ?? lc.role ?? message.type ?? lc.type ?? "unknown",
-        name: message.name ?? lc.name ?? null,
-        content: normalizedContent,
-        additional_kwargs: message.additional_kwargs ?? lc.additional_kwargs ?? {},
-        response_metadata:
-          message.response_metadata ?? lc.response_metadata ?? {},
-        tool_calls: message.tool_calls ?? lc.tool_calls ?? [],
-        invalid_tool_calls:
-          message.invalid_tool_calls ?? lc.invalid_tool_calls ?? [],
-        usage_metadata: message.usage_metadata ?? lc.usage_metadata ?? {},
-      };
-    };
-
-    const normalizedMessages = checkpointMessages
-      .map(normalizeMessage)
-      .filter((msg) => {
-        if (!msg) return false;
-        if (msg.type === "tool" && msg.name === "search_benin_law") {
-          return false;
-        }
-        return true;
-      });
+        return {
+          id: msg.id || `msg_${index}`,
+          type: msg.role === 'user' ? 'human' : 'ai',
+          role: msg.role,
+          name: null,
+          content: msg.content,
+          additional_kwargs: {},
+          response_metadata: {},
+          tool_calls: [],
+          invalid_tool_calls: [],
+          usage_metadata: {},
+          timestamp: msg.timestamp,
+          metadata: msg.metadata || null,
+        };
+      })
+      .filter((msg: any) => msg !== null);
 
     const totalMessages = normalizedMessages.length;
     const totalPages =

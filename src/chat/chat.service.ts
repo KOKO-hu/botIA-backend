@@ -1,5 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
-export interface SearchResult {
+export interface PineconeSearchResult {
   id: string;
   score: number;
   payload: {
@@ -13,6 +13,7 @@ import { RequestCancelledException } from './exceptions/cancelled.exception';
 import { PineconeService } from 'src/pinecone/pinecone.service';
 import { LangchainService } from 'src/langchain/langchain.service';
 import { MongoCheckpointer } from 'src/memory/mongo-checkpointer.service';
+import { AIMessage, ToolMessage } from 'langchain';
 export interface ChatRequest {
   question: string;
   sessionId?: string;
@@ -21,7 +22,7 @@ export interface ChatRequest {
 
 export interface ChatResponse {
   answer: string;
-  relevantDocuments: SearchResult[];
+  relevantDocuments: PineconeSearchResult[];
   sources: Array<{
     url: string;
     titre: string;
@@ -30,7 +31,29 @@ export interface ChatResponse {
   sessionId: string;
   timestamp: Date;
 }
+interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswerIndex: number;
+  explanation?: string;
+}
+export interface AgentResponse {
+  type: "quiz" | "search" | "chat" | "error";
+  data: QuizQuestion[] | SearchResult | string | null;
+}
 
+export interface SearchResult {
+  type: "search_result";
+  response: string;
+  citations: string[];
+  sources: Array<{
+    url: string;
+    numero_loi: string;
+    titre: string;
+    article?: string;
+    pages?: string;
+  }>;
+}
 @Injectable()
 export class ChatService {
   private readonly logger = new Logger(ChatService.name);
@@ -64,12 +87,31 @@ export class ChatService {
       return undefined;
     };
 
-    // 1️⃣ On récupère le tool s'il existe
-    const toolMsg = [...messages].reverse().find(isToolMessage);
-    const toolName = extractToolName(toolMsg);
-  
     // 2️⃣ On récupère le dernier message AI
     const lastAiMsg = [...messages].reverse().find((m) => m.type === "ai" || m.type === "assistant");
+    
+    // 1️⃣ On récupère le tool seulement s'il est directement lié au dernier message AI
+    // On cherche dans les 2 messages précédents, mais on vérifie qu'il n'y a pas de message user entre les deux
+    // Cela évite de récupérer des tools d'anciennes conversations
+    let toolMsg = null;
+    if (lastAiMsg) {
+      const lastAiIndex = messages.lastIndexOf(lastAiMsg);
+      // Chercher un tool message dans les 2 messages précédents
+      for (let i = lastAiIndex - 1; i >= 0 && i >= lastAiIndex - 2; i--) {
+        const msg = messages[i];
+        // Si on trouve un message user, c'est un nouveau tour, on arrête
+        if (msg.type === "human" || msg.type === "user" || msg.role === "user") {
+          break;
+        }
+        // Si on trouve un tool message, on le prend
+        if (isToolMessage(msg)) {
+          toolMsg = msg;
+          break;
+        }
+      }
+    }
+    
+    const toolName = extractToolName(toolMsg);
   
     // 3️⃣ Vérifier si le tool utilisé est un QUIZ
     const isQuiz =
@@ -99,11 +141,43 @@ export class ChatService {
       };
     }
   
-    // 🟩 CAS 2 : Chat → renvoyer IA uniquement
+    // 🟩 CAS 2 : Chat → renvoyer IA + sources avec URLs
     if (isChatTool) {
+      // Extraire les sources du ToolMessage si disponible
+      let sources = null;
+      if (toolMsg?.content) {
+        try {
+          let toolContent: any;
+          
+          // Gérer différents formats de contenu
+          if (typeof toolMsg.content === 'string') {
+            // Essayer de parser comme JSON
+            try {
+              toolContent = JSON.parse(toolMsg.content);
+            } catch {
+              // Si ce n'est pas du JSON, chercher dans le contenu brut
+              toolContent = toolMsg.content;
+            }
+          } else {
+            toolContent = toolMsg.content;
+          }
+          
+          // Extraire les sources si elles existent
+          if (toolContent?.sources && Array.isArray(toolContent.sources)) {
+            sources = toolContent.sources;
+          } else if (toolContent?.type === 'search_result' && toolContent?.sources) {
+            sources = toolContent.sources;
+          }
+        } catch (e) {
+          // Si le parsing échoue, on continue sans sources
+          this.logger.warn('Failed to parse tool message content for sources', e);
+        }
+      }
+
       return {
         mode: "chat",
-        ai: lastAiMsg?.content || null as any
+        ai: lastAiMsg?.content || null as any,
+        sources: sources // Ajouter les sources avec URLs pour référence
       };
     }
   
@@ -119,33 +193,15 @@ async chat(question: string, sessionId: string, userId: string): Promise<any> {
   const existingConv = await this.mongoCheckpointer.findActiveConversation(sessionId, userId);
   const threadId = existingConv ? existingConv._id.toString() : await this.mongoCheckpointer.init(sessionId, userId);
 
- /*  const threadId = await this.mongoCheckpointer.init(sessionId, userId); */
+
 
   const agent = this.langchainService.getAgent();
   const results = await agent.invoke({
-    messages: [{
-      role: "user",
-      content: question,
-    }],
-    
-  }, {configurable: { thread_id: threadId }});
- 
-  const toolResponse = await this.extractFinalResponse(results);
- // 🟩 CAS 1 : Chat → on retourne juste le texte IA
- if (toolResponse.mode === "chat") {
-  return toolResponse.ai || "";
-}
-
-// 🟦 CAS 2 : Quiz → on retourne object (ai + tool)
-if (toolResponse.mode === "quiz") {
-  return {
-    ai: toolResponse.ai,
-    tool: toolResponse.tool,
-  };
-}
-
-// 🟨 Fallback (ne devrait pas arriver)
-return toolResponse.ai || "";
+    messages: [{ role: "user", content: question }],
+  }, { configurable: { thread_id: threadId } });
+  
+  return this.extractFinalResponse(results);
+  
   }
 
   async clearConversation(sessionId: string, userId: string) {
